@@ -209,4 +209,67 @@ var _ = Describe("Leader election", func() {
 			Expect(pod.TypeMeta.Kind).To(Equal("Pod"))
 		})
 	})
+
+	Describe("getNode", func() {
+		var (
+			client crclient.Client
+		)
+		BeforeEach(func() {
+			client = fake.NewFakeClient(
+				&corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "mynode",
+					},
+				},
+			)
+		})
+		It("should return an error if no node is found", func() {
+			node := corev1.Node{}
+			err := getNode(context.TODO(), client, "", &node)
+			Expect(err).ShouldNot(BeNil())
+		})
+		It("should return the node with the given name", func() {
+			node := corev1.Node{}
+			err := getNode(context.TODO(), client, "mynode", &node)
+			Expect(err).Should(BeNil())
+			Expect(node.TypeMeta.APIVersion).To(Equal("v1"))
+			Expect(node.TypeMeta.Kind).To(Equal("Node"))
+		})
+	})
+
+	Describe("isNotReadyNode", func() {
+		var (
+			leaderNode *corev1.Node
+		)
+		BeforeEach(func() {
+			leaderNode = &corev1.Node{
+				Status: corev1.NodeStatus{
+					Conditions: make([]corev1.NodeCondition, 1),
+				},
+			}
+		})
+		It("should return false with an empty status", func() {
+			Expect(isNotReadyNode(*leaderNode)).To(Equal(false))
+		})
+		It("should return false if type is incorrect", func() {
+			leaderNode.Status.Conditions[0].Type = corev1.NodeMemoryPressure
+			leaderNode.Status.Conditions[0].Status = corev1.ConditionFalse
+			Expect(isNotReadyNode(*leaderNode)).To(Equal(false))
+		})
+		It("should return false if NodeReady's status is true", func() {
+			leaderNode.Status.Conditions[0].Type = corev1.NodeReady
+			leaderNode.Status.Conditions[0].Status = corev1.ConditionTrue
+			Expect(isNotReadyNode(*leaderNode)).To(Equal(false))
+		})
+		It("should return true when Type is set and Status is set to false", func() {
+			leaderNode.Status.Conditions[0].Type = corev1.NodeReady
+			leaderNode.Status.Conditions[0].Status = corev1.ConditionFalse
+			Expect(isNotReadyNode(*leaderNode)).To(Equal(true))
+		})
+		It("should return true when Type is set and Status is set to unknown", func() {
+			leaderNode.Status.Conditions[0].Type = corev1.NodeReady
+			leaderNode.Status.Conditions[0].Status = corev1.ConditionUnknown
+			Expect(isNotReadyNode(*leaderNode)).To(Equal(true))
+		})
+	})
 })

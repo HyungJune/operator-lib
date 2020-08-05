@@ -167,6 +167,7 @@ func Become(ctx context.Context, lockName string, opts ...Option) error {
 				log.Info("Leader lock configmap owner reference must be a pod.", "OwnerReference", existingOwners[0])
 			default:
 				leaderPod := &corev1.Pod{}
+				leaderNode := &corev1.Node{}
 				key = crclient.ObjectKey{Namespace: ns, Name: existingOwners[0].Name}
 				err = config.Client.Get(ctx, key, leaderPod)
 				switch {
@@ -181,6 +182,24 @@ func Become(ctx context.Context, lockName string, opts ...Option) error {
 					err := config.Client.Delete(ctx, leaderPod)
 					if err != nil {
 						log.Error(err, "Leader pod could not be deleted.")
+					}
+				case getNode(ctx, config.Client, leaderPod.Spec.NodeName, leaderNode) == nil && isNotReadyNode(*leaderNode):
+					log.Info("the status of the node where operator pod with leader lock was running has been 'notReady'")
+					log.Info("Deleting the leader.")
+
+					//Mark the termainating status to the leader
+					err := config.Client.Delete(ctx, leaderPod)
+					if err != nil {
+						log.Error(err, "Leader pod could not be deleted.")
+					} else {
+						err := config.Client.Delete(ctx, existing)
+						switch {
+						case err == nil:
+						case apierrors.IsNotFound(err):
+							log.Info("cm has been deleted by prior operator.")
+						case err != nil:
+							return err
+						}
 					}
 
 				default:
@@ -269,4 +288,23 @@ func getPod(ctx context.Context, client crclient.Client, ns string) (*corev1.Pod
 	log.V(1).Info("Found Pod", "Pod.Namespace", ns, "Pod.Name", pod.Name)
 
 	return pod, nil
+}
+
+func getNode(ctx context.Context, client crclient.Client, nodeName string, node *corev1.Node) error {
+	key := crclient.ObjectKey{Namespace: "", Name: nodeName}
+	err := client.Get(ctx, key, node)
+	if err != nil {
+		log.Error(err, "Failed to get Node", "Node.Name", nodeName)
+		return err
+	}
+	return nil
+}
+
+func isNotReadyNode(node corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
